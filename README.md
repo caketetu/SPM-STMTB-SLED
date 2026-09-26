@@ -22,11 +22,11 @@ SK6812フルカラーLEDにて動作を確認
 ## ピンアサイン
 | Function       | Pin  | 備考 |
 | -------------- | ---- | ---- |
-| TIM2_CH1       | PA0  |      |
-| TIM2_CH2       | PA1  |      |
+| TIM1_CH1       | PA0  |   LED_OUT1   |
+| TIM1_CH2       | PA1  |   LED_OUT2   |
 | USART2_TX      | PA2  |   SYS-RS485   |
-| GPIO_Input     | PA3  |   H_LIMIT   |
-| GPIO_Input     | PA4  |   L_LIMIT   |
+| TIM1_CH4     | PA3  |   LED_OUT4   |
+| GPIO_Input     | PA4  |      |
 | SPI1_SCK       | PA5  |   SYS-SPI   |
 | SPI1_MISO      | PA6  |   SYS-SPI   |
 | SPI1_MOSI      | PA7  |   SYS-SPI   |
@@ -44,7 +44,7 @@ SK6812フルカラーLEDにて動作を確認
 | GPIO_Output    | PB3  |      |
 | GPIO_Output    | PB4  |  SYS-LED1    |
 | GPIO_Input     | PB5  |  SYS-EN    |
-| GPIO_Output    | PB6  |      |
+| TIM1_CH3    | PB6  |  LED_OUT3    |
 | GPIO_Output    | PB7  |      |
 | GPIO_Output    | PB8  |      |
 | GPIO_Input     | PB9  |      |

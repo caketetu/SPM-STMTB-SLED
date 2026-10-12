@@ -22,7 +22,6 @@
 #include "dmamux.h"
 #include "fdcan.h"
 #include "spi.h"
-#include "stm32c0xx_hal_tim.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -35,8 +34,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define WS_ZERO   14
-#define WS_ONE    29
+#define WS_ZERO   18
+#define WS_ONE    34
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -44,6 +43,8 @@
 #define LED_MAX     32
 #define RESET_SLOTS 120
 #define WS_BITS     24
+#define PWM_CH_COUNT 4
+#define WS_SLOT_COUNT (LED_MAX * WS_BITS + RESET_SLOTS)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -66,8 +67,9 @@ uint8_t tx_buf[256];
 int rx_len=0;
 
 //LED制御用変数
-uint16_t pwmData[LED_MAX * WS_BITS + RESET_SLOTS];
-volatile int pwmDMA_busy[4] = {0,0,0,0}; // DMA送信中フラグ
+uint16_t pwmData[WS_SLOT_COUNT];
+uint16_t pwmDmaBurstData[WS_SLOT_COUNT * PWM_CH_COUNT];
+volatile uint8_t ws2812_send_requested = 0U;
 //パターン点灯用変数
 volatile int16_t ten_ms_timer = 0; // 10msごとのタイマー
 int16_t pattern_step = 0; //パターン点灯のステップ数
@@ -76,14 +78,6 @@ uint8_t pattern_green = 0; // 徐々に緑の値
 uint8_t pattern_blue = 0; // 徐々に青の値
 int8_t flame_variation[LED_MAX] = {0};
 uint32_t flame_random_state = 0x13579BDFU;
-
-//PWMチャンネル指定
-// TIM1 ch1, TIM1 ch2, TIM2 ch4, TIM3 ch4
-#define PWM_CH_COUNT 4
-//TIM_HandleTypeDef *pwm_timers[4] = {&htim1, &htim1, &htim2, &htim3};
-//uint32_t pwm_channels[4] = {TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_4, TIM_CHANNEL_4};
-TIM_HandleTypeDef *pwm_timers[4] = {&htim1, &htim1, &htim1, &htim1};
-uint32_t pwm_channels[4] = {TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3, TIM_CHANNEL_4};
 
 //アプリケーション変数
 int16_t dev_id=51; //デバイスID
@@ -107,8 +101,7 @@ int16_t enable_input = 0; //イネーブル信号入力
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-static HAL_StatusTypeDef WS2812_Send(int pwm_no);
-static HAL_StatusTypeDef WS2812_StartSend(int pwm_no);
+static HAL_StatusTypeDef WS2812_StartSend(void);
 uint8_t limit_max(uint8_t value, uint8_t max);
 
 /* USER CODE END PFP */
@@ -149,53 +142,85 @@ void WS2812_Reset(void)
     }
 }
 
-  static HAL_StatusTypeDef WS2812_Send(int pwm_no)
-  {
-    HAL_StatusTypeDef status;
-    uint32_t start_tick;
-
-    pwmDMA_busy[pwm_no] = 1;
-    status = HAL_TIM_PWM_Start_DMA(pwm_timers[pwm_no],
-                     pwm_channels[pwm_no],
-                     (uint32_t *)pwmData,
-                     led_num * WS_BITS + RESET_SLOTS);
-    if (status != HAL_OK)
+static void WS2812_PrepareBurstData(uint16_t slot_count)
+{
+    for (uint16_t slot = 0; slot < slot_count; slot++)
     {
-      pwmDMA_busy[pwm_no] = 0;
-      return status;
+        uint16_t index = slot * PWM_CH_COUNT;
+        uint16_t duty = pwmData[slot];
+
+        pwmDmaBurstData[index + 0U] = duty;
+        pwmDmaBurstData[index + 1U] = duty;
+        pwmDmaBurstData[index + 2U] = duty;
+        pwmDmaBurstData[index + 3U] = duty;
+    }
+}
+
+static HAL_StatusTypeDef WS2812_StartSend(void)
+{
+    const uint16_t slot_count = (uint16_t)(led_num * WS_BITS + RESET_SLOTS);
+    const uint32_t all_channels =
+        TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E | TIM_CCER_CC4E;
+
+    if ((led_num < 1) || (led_num > LED_MAX))
+    {
+        return HAL_ERROR;
     }
 
-    start_tick = HAL_GetTick();
-    while (pwmDMA_busy[pwm_no] != 0)
+    WS2812_Reset();
+    WS2812_PrepareBurstData(slot_count);
+
+    __HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
+    TIM1->CR1 &= ~TIM_CR1_CEN;
+    TIM1->CCER &= ~all_channels;
+    __HAL_TIM_MOE_DISABLE_UNCONDITIONALLY(&htim1);
+
+    if (htim1.DMABurstState == HAL_DMA_BURST_STATE_BUSY)
     {
-      if ((HAL_GetTick() - start_tick) > 100U)
-      {
-        HAL_TIM_PWM_Stop_DMA(pwm_timers[pwm_no], pwm_channels[pwm_no]);
-        pwmDMA_busy[pwm_no] = 0;
-        return HAL_TIMEOUT;
-      }
+        if (HAL_TIM_DMABurst_WriteStop(&htim1, TIM_DMA_UPDATE) != HAL_OK)
+        {
+            return HAL_ERROR;
+        }
     }
 
-    return HAL_TIM_PWM_Stop_DMA(pwm_timers[pwm_no], pwm_channels[pwm_no]);
-  }
+    __HAL_TIM_ENABLE_OCxPRELOAD(&htim1, TIM_CHANNEL_1);
+    __HAL_TIM_ENABLE_OCxPRELOAD(&htim1, TIM_CHANNEL_2);
+    __HAL_TIM_ENABLE_OCxPRELOAD(&htim1, TIM_CHANNEL_3);
+    __HAL_TIM_ENABLE_OCxPRELOAD(&htim1, TIM_CHANNEL_4);
 
-  /* DMA送信を開始するだけで完了を待たない（TIM14の10ms処理から呼び出す用） */
-  static HAL_StatusTypeDef WS2812_StartSend(int pwm_no)
-  {
-    HAL_StatusTypeDef status;
-
-    pwmDMA_busy[pwm_no] = 1;
-    status = HAL_TIM_PWM_Start_DMA(pwm_timers[pwm_no],
-                     pwm_channels[pwm_no],
-                     (uint32_t *)pwmData,
-                     led_num * WS_BITS + RESET_SLOTS);
-    if (status != HAL_OK)
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pwmDmaBurstData[0]);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, pwmDmaBurstData[1]);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pwmDmaBurstData[2]);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, pwmDmaBurstData[3]);
+    if (HAL_TIM_GenerateEvent(&htim1, TIM_EVENTSOURCE_UPDATE) != HAL_OK)
     {
-      pwmDMA_busy[pwm_no] = 0;
+        return HAL_ERROR;
     }
 
-    return status;
-  }
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pwmDmaBurstData[4]);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, pwmDmaBurstData[5]);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, pwmDmaBurstData[6]);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, pwmDmaBurstData[7]);
+
+    if (HAL_TIM_DMABurst_MultiWriteStart(
+            &htim1,
+            TIM_DMABASE_CCR1,
+            TIM_DMA_UPDATE,
+            (uint32_t *)&pwmDmaBurstData[2U * PWM_CH_COUNT],
+            TIM_DMABURSTLENGTH_4TRANSFERS,
+            (uint32_t)(slot_count - 2U) * PWM_CH_COUNT) != HAL_OK)
+    {
+        return HAL_ERROR;
+    }
+
+    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
+    TIM1->CNT = 0U;
+    TIM1->CCER |= all_channels;
+    __HAL_TIM_MOE_ENABLE(&htim1);
+    __HAL_TIM_ENABLE(&htim1);
+
+    return HAL_OK;
+}
 
 
 //LED明るさ制限
@@ -289,7 +314,7 @@ int main(void)
 
   ParamLoad();
   SPM_ModbusSetAddress(dev_id);
-  if(led_num > 64) led_num = 64;
+  if ((led_num < 1) || (led_num > LED_MAX)) led_num = LED_MAX;
 
   HAL_UART_Receive_IT(&huart2, &recv_data, 1);
 
@@ -309,12 +334,9 @@ int main(void)
       WS2812_SetLED(i,16,16,16); //白
   }
 
-  //送信
-  for(int i=0;i<PWM_CH_COUNT;i++){
-    if (WS2812_StartSend(i) != HAL_OK)
-    {
-      Error_Handler();
-    }
+  if (WS2812_StartSend() != HAL_OK)
+  {
+    Error_Handler();
   }
 
   HAL_Delay(500); // 1秒待機
@@ -324,12 +346,9 @@ int main(void)
   {
       WS2812_SetLED(i,0,0,0); //消灯
   }
-  //送信
-  for(int i=0;i<PWM_CH_COUNT;i++){
-    if (WS2812_StartSend(i) != HAL_OK)
-    {
-      Error_Handler();
-    }
+  if (WS2812_StartSend() != HAL_OK)
+  {
+    Error_Handler();
   }
 
   HAL_Delay(500); // 1秒待機
@@ -339,12 +358,9 @@ int main(void)
   {
       WS2812_SetLED(i,0,0,0); //消灯
   }
-  /* 送信 */
-  for(int i=0;i<PWM_CH_COUNT;i++){
-    if (WS2812_StartSend(i) != HAL_OK)
-    {
-      Error_Handler();
-    }
+  if (WS2812_StartSend() != HAL_OK)
+  {
+    Error_Handler();
   }
   
 
@@ -660,6 +676,15 @@ int main(void)
               break;
         }
     }
+
+    if (ws2812_send_requested != 0U)
+    {
+        ws2812_send_requested = 0U;
+        if (WS2812_StartSend() != HAL_OK)
+        {
+            Error_Handler();
+        }
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -707,33 +732,18 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-/* pwm_channels[] (TIM_CHANNEL_x) に対応する HAL_TIM_ActiveChannel 一覧 */
-static const HAL_TIM_ActiveChannel pwm_active_channels[PWM_CH_COUNT] = {
-    HAL_TIM_ACTIVE_CHANNEL_1, /* TIM1 CH1 */
-    HAL_TIM_ACTIVE_CHANNEL_2, /* TIM1 CH2 */
-    HAL_TIM_ACTIVE_CHANNEL_3, /* TIM1 CH3 */
-    HAL_TIM_ACTIVE_CHANNEL_4 /* TIM1 CH4 */
-};
-
-void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
-{
-    for (int i = 0; i < PWM_CH_COUNT; i++)
-    {
-        if (pwm_timers[i]->Instance == htim->Instance &&
-            htim->Channel == pwm_active_channels[i])
-        {
-            __HAL_TIM_SET_COMPARE(pwm_timers[i], pwm_channels[i], 0);
-            pwmDMA_busy[i] = 0; // DMA送信完了フラグをクリア
-            break;
-        }
-    }
-}
-
 volatile int timer_1s = 0; // タイマーカウンタ
 volatile int timer_10ms = 0; // タイマーカウンタ
 volatile int led_state[4] = {0,0,0,0}; // タイマーカウンタ
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
+    if (htim->Instance == TIM1)
+    {
+        __HAL_TIM_DISABLE_DMA(&htim1, TIM_DMA_UPDATE);
+        htim1.DMABurstState = HAL_DMA_BURST_STATE_READY;
+        return;
+    }
+
     if(htim->Instance==TIM14)
     {
         timer_1s++;
@@ -751,20 +761,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             {
                 case 0:
                     led_state[0] = 1;
-                    for (int i = 0; i < 1; i++)
-                    {
-                        WS2812_StartSend(i);
-                    }
+                    ws2812_send_requested = 1U;
                     break;
                 case 1:
                     led_state[0] = 2;
                     break;
                 case 2:
                     led_state[0] = 3;
-                    for (int i = 0; i < 1; i++)
-                    {
-                        HAL_TIM_PWM_Stop(pwm_timers[i], pwm_channels[i]);
-                    }
                     break;
                 case 3:
                     led_state[0] = 0;
@@ -773,54 +776,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
                     led_state[0] = 0;
                     break;
             }
-            // for(int i=0;i<PWM_CH_COUNT;i++){
-            //   switch(led_state[i])
-            //   {
-            //       case 0: // 送信開始
-            //           if (WS2812_StartSend(i) == HAL_OK)
-            //           {
-            //               led_state[i] = 1;
-            //           }
-            //           break;
-            //       case 1: // 送信完了待ち
-            //           if (pwmDMA_busy[i] == 0)
-            //           {
-            //               /* HAL_TIM_PWM_Stop()はTIM1のようなアドバンストタイマーでは
-            //                  MOE(メイン出力)とカウンタ(CEN)をタイマー全体で無効化してしまう。
-            //                  同じタイマーを共有する他チャンネルがまだ送信中の間に呼ぶと、
-            //                  そのチャンネルの出力/DMA転送まで巻き添えで止まってしまうため、
-            //                  同一タイマーを使う全チャンネルの送信が完了してから呼び出す。 */
-            //               int timer_done = 1;
-            //               for (int j = 0; j < PWM_CH_COUNT; j++)
-            //               {
-            //                   if (pwm_timers[j]->Instance == pwm_timers[i]->Instance &&
-            //                       pwmDMA_busy[j] != 0)
-            //                   {
-            //                       timer_done = 0;
-            //                       break;
-            //                   }
-            //               }
-            //               if (timer_done)
-            //               {
-            //                   for (int j = 0; j < PWM_CH_COUNT; j++)
-            //                   {
-            //                       if (pwm_timers[j]->Instance == pwm_timers[i]->Instance)
-            //                       {
-            //                           HAL_TIM_PWM_Stop(pwm_timers[j], pwm_channels[j]);
-            //                       }
-            //                   }
-            //               }
-            //               led_state[i] = 2;
-            //           }
-            //           break;
-            //       case 2: // 次サイクルへ
-            //           led_state[i] = 0;
-            //           break;
-            //       default:
-            //           led_state[i] = 0;
-            //           break;
-            //   }
-            // }
         }
     }
 }

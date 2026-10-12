@@ -35,8 +35,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define WS_ZERO   18
-#define WS_ONE    38
+#define WS_ZERO   14
+#define WS_ONE    29
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -751,7 +751,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             {
                 case 0:
                     led_state[0] = 1;
-                    for (int i = 0; i < PWM_CH_COUNT; i++)
+                    for (int i = 0; i < 1; i++)
                     {
                         WS2812_StartSend(i);
                     }
@@ -760,11 +760,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
                     led_state[0] = 2;
                     break;
                 case 2:
-                    led_state[0] = 0;
-                    for (int i = 0; i < PWM_CH_COUNT; i++)
+                    led_state[0] = 3;
+                    for (int i = 0; i < 1; i++)
                     {
                         HAL_TIM_PWM_Stop(pwm_timers[i], pwm_channels[i]);
                     }
+                    break;
+                case 3:
+                    led_state[0] = 0;
                     break;
                 default:
                     led_state[0] = 0;

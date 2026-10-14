@@ -44,7 +44,9 @@
 #define RESET_SLOTS 120
 #define WS_BITS     24
 #define PWM_CH_COUNT 4
-#define WS_SLOT_COUNT (LED_MAX * WS_BITS + RESET_SLOTS)
+/* Keep TIM1 outputs low for 30 us before the first LED data slot. */
+#define WS_START_GUARD_SLOTS WS_BITS
+#define WS_SLOT_COUNT (LED_MAX * WS_BITS + WS_START_GUARD_SLOTS + RESET_SLOTS)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -121,7 +123,7 @@ void WS2812_SetLED(uint8_t led,uint8_t r,uint8_t g,uint8_t b)
         ((uint32_t)r << 8 ) |
          b;
 
-    int index = led * 24;
+    int index = WS_START_GUARD_SLOTS + led * WS_BITS;
 
     for(int i=0;i<24;i++)
     {
@@ -134,8 +136,15 @@ void WS2812_SetLED(uint8_t led,uint8_t r,uint8_t g,uint8_t b)
 
 void WS2812_Reset(void)
 {
-    for(int i=led_num*24;
-        i<led_num*24+RESET_SLOTS;
+    /* Keep the output low while TIM1 and its Update DMA settle. */
+    for (int i = 0; i < WS_START_GUARD_SLOTS; i++)
+    {
+        pwmData[i] = 0;
+    }
+
+    int reset_start = WS_START_GUARD_SLOTS + led_num * WS_BITS;
+    for(int i=reset_start;
+        i<reset_start+RESET_SLOTS;
         i++)
     {
         pwmData[i]=0;
@@ -158,7 +167,8 @@ static void WS2812_PrepareBurstData(uint16_t slot_count)
 
 static HAL_StatusTypeDef WS2812_StartSend(void)
 {
-    const uint16_t slot_count = (uint16_t)(led_num * WS_BITS + RESET_SLOTS);
+    const uint16_t slot_count =
+        (uint16_t)(WS_START_GUARD_SLOTS + led_num * WS_BITS + RESET_SLOTS);
     const uint32_t all_channels =
         TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E | TIM_CCER_CC4E;
 

@@ -1,3 +1,19 @@
-build
-mx.scratch
-!.settings
+# Ignore build directories
+#===各フォルダに入れる===
+#For KiCAD
+/*-backups
+/gerber
+fp-info-cache
+
+#For STM32CubeIDE
+Debug/
+Release/
+/.settings/
+.mxproject
+*.launch
+.metadata/
+
+#For Visual Studio Code
+.vscode/
+
+#for ArduinoIDE

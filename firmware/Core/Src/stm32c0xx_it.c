@@ -22,6 +22,9 @@
 #include "stm32c0xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+/* Keep the handler symbol aligned with the startup vector table. */
+#define DMAMUX1_DMA1_CH4_5_6_7_IRQHandler DMAMUX1_DMA1_CH4_5_IRQHandler
+void DMAMUX1_DMA1_CH4_5_IRQHandler(void);
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,6 +64,7 @@ extern DMA_HandleTypeDef hdma_tim1_ch3;
 extern DMA_HandleTypeDef hdma_tim1_ch4;
 extern DMA_HandleTypeDef hdma_tim1_up;
 extern TIM_HandleTypeDef htim14;
+extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
 /* USER CODE BEGIN EV */
 
@@ -178,16 +182,16 @@ void DMA1_Channel2_3_IRQHandler(void)
 /**
   * @brief This function handles DMAMUX and DMA1 channel 4 to channel 7 interrupts.
   */
-void DMAMUX1_DMA1_CH4_5_IRQHandler(void)
+void DMAMUX1_DMA1_CH4_5_6_7_IRQHandler(void)
 {
-  /* USER CODE BEGIN DMAMUX1_DMA1_CH4_5_IRQn 0 */
+  /* USER CODE BEGIN DMAMUX1_DMA1_CH4_5_6_7_IRQn 0 */
 
-  /* USER CODE END DMAMUX1_DMA1_CH4_5_IRQn 0 */
+  /* USER CODE END DMAMUX1_DMA1_CH4_5_6_7_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_tim1_ch4);
   HAL_DMA_IRQHandler(&hdma_tim1_up);
-  /* USER CODE BEGIN DMAMUX1_DMA1_CH4_5_IRQn 1 */
+  /* USER CODE BEGIN DMAMUX1_DMA1_CH4_5_6_7_IRQn 1 */
 
-  /* USER CODE END DMAMUX1_DMA1_CH4_5_IRQn 1 */
+  /* USER CODE END DMAMUX1_DMA1_CH4_5_6_7_IRQn 1 */
 }
 
 /**
@@ -202,6 +206,20 @@ void TIM14_IRQHandler(void)
   /* USER CODE BEGIN TIM14_IRQn 1 */
 
   /* USER CODE END TIM14_IRQn 1 */
+}
+
+/**
+  * @brief This function handles USART1 interrupt.
+  */
+void USART1_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART1_IRQn 0 */
+
+  /* USER CODE END USART1_IRQn 0 */
+  HAL_UART_IRQHandler(&huart1);
+  /* USER CODE BEGIN USART1_IRQn 1 */
+
+  /* USER CODE END USART1_IRQn 1 */
 }
 
 /**
